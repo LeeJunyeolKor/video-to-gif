@@ -50,7 +50,7 @@ struct ContentView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(isRecording ? .red : .accentColor)
+                .tint(isRecording ? .red : .blue)
                 .disabled(isWorking || isSelecting)
 
                 Button("MOV 파일 선택", systemImage: "movieclapper") {
