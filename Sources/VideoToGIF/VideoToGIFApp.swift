@@ -18,6 +18,8 @@ struct ContentView: View {
     @State private var sourceURL: URL?
     @State private var status = "영역을 녹화하거나 MOV 파일을 선택하세요."
     @State private var isWorking = false
+    @State private var isSelecting = false
+    @State private var isRecording = false
     @State private var isImporterPresented = false
 
     var body: some View {
@@ -36,29 +38,39 @@ struct ContentView: View {
             }
 
             HStack(spacing: 12) {
-                Button("화면 영역 녹화", systemImage: "record.circle") {
-                    recordScreen()
+                Button(
+                    isRecording ? "녹화 중지" : "화면 영역 녹화",
+                    systemImage: isRecording ? "stop.circle.fill" : "record.circle"
+                ) {
+                    if isRecording {
+                        status = "녹화를 마치는 중…"
+                        ScreenRecorder.stop()
+                    } else {
+                        recordScreen()
+                    }
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(isRecording ? .red : .accentColor)
+                .disabled(isWorking || isSelecting)
 
                 Button("MOV 파일 선택", systemImage: "movieclapper") {
                     isImporterPresented = true
                 }
                 .buttonStyle(.bordered)
+                .disabled(isWorking || isSelecting || isRecording)
             }
 
             Button("GIF로 저장", systemImage: "square.and.arrow.down") {
                 saveGIF()
             }
-            .disabled(sourceURL == nil || isWorking)
+            .disabled(sourceURL == nil || isWorking || isSelecting || isRecording)
 
-            if isWorking {
+            if isWorking || isSelecting {
                 ProgressView()
                     .controlSize(.small)
             }
         }
         .padding(32)
-        .disabled(isWorking)
         .fileImporter(
             isPresented: $isImporterPresented,
             allowedContentTypes: [.movie],
@@ -71,22 +83,20 @@ struct ContentView: View {
     }
 
     private func recordScreen() {
-        isWorking = true
+        isSelecting = true
         status = "드래그하여 녹화 영역을 선택하세요."
         let appWindow = NSApp.keyWindow
 
         Task {
-            defer {
-                isWorking = false
-                appWindow?.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
-            }
-
             guard let region = await AreaSelector.select(on: appWindow?.screen) else {
+                isSelecting = false
                 status = "녹화를 취소했습니다."
                 return
             }
-            appWindow?.orderOut(nil)
+            isSelecting = false
+            isRecording = true
+            defer { isRecording = false }
+            appWindow?.makeKeyAndOrderFront(nil)
 
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("video-to-gif-\(UUID().uuidString).mov")
