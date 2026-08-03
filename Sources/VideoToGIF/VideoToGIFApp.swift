@@ -74,6 +74,7 @@ struct ContentView: View {
         .onAppear {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
+            ScreenRecorder.install { recordScreen() }
         }
         .fileImporter(
             isPresented: $isImporterPresented,
@@ -87,6 +88,7 @@ struct ContentView: View {
     }
 
     private func recordScreen() {
+        guard !isWorking, !isSelecting, !isRecording else { return }
         isSelecting = true
         status = "드래그하여 녹화 영역을 선택하세요."
         let appWindow = NSApp.keyWindow
@@ -145,7 +147,21 @@ struct ContentView: View {
 enum ScreenRecorder {
     private static var stopInput: FileHandle?
     private static var statusItem: NSStatusItem?
-    private static var stopTarget: RecordingStopTarget?
+    private static var menuTarget: RecordingMenuTarget?
+    private static var startAction: (() -> Void)?
+
+    static func install(startAction: @escaping () -> Void) {
+        self.startAction = startAction
+        guard statusItem == nil else { return }
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let target = RecordingMenuTarget()
+        item.button?.target = target
+        item.button?.action = #selector(RecordingMenuTarget.toggle)
+        statusItem = item
+        menuTarget = target
+        showStartButton()
+    }
 
     static func record(to outputURL: URL, region: CGRect) async throws {
         guard let mainScreen = NSScreen.screens.first else { throw CancellationError() }
@@ -169,7 +185,7 @@ enum ScreenRecorder {
         await withCheckedContinuation { continuation in
             process.terminationHandler = { _ in continuation.resume() }
         }
-        hideStopButton()
+        showStartButton()
         try? stopInput?.close()
         stopInput = nil
 
@@ -198,29 +214,35 @@ enum ScreenRecorder {
         statusItem?.button?.isEnabled = false
     }
 
-    private static func showStopButton() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        let target = RecordingStopTarget()
-        item.button?.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: "녹화 중지")
-        item.button?.contentTintColor = .systemRed
-        item.button?.toolTip = "녹화 중지"
-        item.button?.target = target
-        item.button?.action = #selector(RecordingStopTarget.stop)
-        statusItem = item
-        stopTarget = target
+    static func toggle() {
+        stopInput == nil ? startAction?() : stop()
     }
 
-    private static func hideStopButton() {
-        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
-        statusItem = nil
-        stopTarget = nil
+    private static func showStopButton() {
+        statusItem?.button?.image = NSImage(
+            systemSymbolName: "stop.circle.fill",
+            accessibilityDescription: "녹화 중지"
+        )
+        statusItem?.button?.contentTintColor = .systemRed
+        statusItem?.button?.toolTip = "녹화 중지"
+        statusItem?.button?.isEnabled = true
+    }
+
+    private static func showStartButton() {
+        statusItem?.button?.image = NSImage(
+            systemSymbolName: "record.circle",
+            accessibilityDescription: "화면 영역 녹화"
+        )
+        statusItem?.button?.contentTintColor = nil
+        statusItem?.button?.toolTip = "화면 영역 녹화"
+        statusItem?.button?.isEnabled = true
     }
 }
 
 @MainActor
-private final class RecordingStopTarget: NSObject {
-    @objc func stop() {
-        ScreenRecorder.stop()
+private final class RecordingMenuTarget: NSObject {
+    @objc func toggle() {
+        ScreenRecorder.toggle()
     }
 }
 
