@@ -10,30 +10,18 @@ swift run
 
 첫 녹화 때 요청되는 화면 기록 권한을 허용하세요.
 
-## 로컬 앱 빌드
+## 팀 공유용 빌드
 
 ```sh
 ./scripts/build-app.sh
-open dist/VideoToGIF.app
 ```
 
-결과물은 `dist/VideoToGIF.app`입니다. 다른 Mac에 배포하기 전에는 `Resources/Info.plist`의 번들 ID와 버전을 확정하세요.
+`dist/VideoToGIF.zip`을 팀원에게 공유하세요. 현재 빌드는 Apple Silicon Mac용입니다.
 
-## 외부 배포
+팀원은 압축을 푼 뒤 앱을 Control-클릭하여 `열기`를 선택하고, 첫 녹화 때 화면 기록 권한을 허용해야 합니다.
 
-Apple Developer Program의 `Developer ID Application` 인증서가 필요합니다.
+버전을 배포할 때마다 `Resources/Info.plist`의 `CFBundleShortVersionString`과 `CFBundleVersion`을 올리세요.
 
 ```sh
-VIDEO_TO_GIF_SIGN_IDENTITY="Developer ID Application: 이름 (TEAM_ID)" ./scripts/build-app.sh
-ditto -c -k --keepParent dist/VideoToGIF.app dist/VideoToGIF-notary.zip
-xcrun notarytool store-credentials "VideoToGIF-notary" --apple-id "APPLE_ID" --team-id "TEAM_ID"
-xcrun notarytool submit dist/VideoToGIF-notary.zip --keychain-profile "VideoToGIF-notary" --wait
-xcrun stapler staple dist/VideoToGIF.app
-ditto -c -k --keepParent dist/VideoToGIF.app dist/VideoToGIF.zip
-spctl --assess --type execute --verbose dist/VideoToGIF.app
+open dist/VideoToGIF.app
 ```
-
-배포 파일은 공증 티켓이 포함된 `dist/VideoToGIF.zip`입니다.
-
-- [Apple: Mac 소프트웨어 패키징](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution)
-- [Apple: macOS 소프트웨어 공증](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)

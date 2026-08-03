@@ -22,4 +22,7 @@ else
 fi
 
 codesign --verify --deep --strict --verbose=2 "$app_bundle"
-printf 'Built %s\n' "$app_bundle"
+archive="$project_dir/dist/VideoToGIF.zip"
+rm -f "$archive"
+ditto -c -k --keepParent "$app_bundle" "$archive"
+printf 'Built %s\n' "$archive"
