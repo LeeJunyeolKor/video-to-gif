@@ -10,6 +10,17 @@ import Testing
     #expect(GIFConverter.frameTimes(duration: 0).isEmpty)
 }
 
+@Test func activityStatusPresentation() {
+    #expect(ActivityStatus.idle("준비").presentation.symbolName == "circle.dashed")
+    #expect(ActivityStatus.ready("video.mov").presentation.symbolName == "movieclapper")
+    #expect(ActivityStatus.selecting.presentation.symbolName == "viewfinder")
+    #expect(ActivityStatus.recording.presentation.symbolName == "record.circle.fill")
+    #expect(ActivityStatus.processing("처리 중").presentation.symbolName == "arrow.triangle.2.circlepath")
+    #expect(ActivityStatus.success("완료").presentation.symbolName == "checkmark.circle.fill")
+    #expect(ActivityStatus.failure("실패").presentation.symbolName == "exclamationmark.triangle.fill")
+    #expect(ActivityStatus.success("완료").presentation.message == "완료")
+}
+
 @Test func captureRegionArguments() {
     let arguments = ScreenRecorder.arguments(
         outputURL: URL(fileURLWithPath: "/tmp/capture.mov"),

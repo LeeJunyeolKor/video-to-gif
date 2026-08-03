@@ -14,9 +14,32 @@ struct VideoToGIFApp: App {
     }
 }
 
+enum ActivityStatus {
+    case idle(String)
+    case ready(String)
+    case selecting
+    case recording
+    case processing(String)
+    case success(String)
+    case failure(String)
+
+    var presentation: (message: String, symbolName: String, color: Color) {
+        switch self {
+        case let .idle(message): (message, "circle.dashed", .secondary)
+        case let .ready(message): (message, "movieclapper", .accentColor)
+        case .selecting: ("드래그하여 녹화 영역을 선택하세요.", "viewfinder", .accentColor)
+        case .recording:
+            ("녹화 중 · 메뉴 막대의 정지 버튼 또는 ⌘⌃Esc로 끝내세요.", "record.circle.fill", .red)
+        case let .processing(message): (message, "arrow.triangle.2.circlepath", .accentColor)
+        case let .success(message): (message, "checkmark.circle.fill", .green)
+        case let .failure(message): (message, "exclamationmark.triangle.fill", .red)
+        }
+    }
+}
+
 struct ContentView: View {
     @State private var sourceURL: URL?
-    @State private var status = "영역을 녹화하거나 MOV 파일을 선택하세요."
+    @State private var status = ActivityStatus.idle("영역을 녹화하거나 MOV 파일을 선택하세요.")
     @State private var isWorking = false
     @State private var isSelecting = false
     @State private var isRecording = false
@@ -24,17 +47,21 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 24) {
-            Image(systemName: sourceURL == nil ? "rectangle.dashed.badge.record" : "checkmark.circle.fill")
+            Image(systemName: "rectangle.dashed.badge.record")
                 .font(.system(size: 58))
-                .foregroundStyle(sourceURL == nil ? Color.secondary : Color.green)
+                .foregroundStyle(.secondary)
 
             VStack(spacing: 8) {
                 Text("Video to GIF")
                     .font(.largeTitle.bold())
-                Text(status)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
+                HStack(spacing: 6) {
+                    Image(systemName: status.presentation.symbolName)
+                        .foregroundStyle(status.presentation.color)
+                    Text(status.presentation.message)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                }
             }
 
             HStack(spacing: 12) {
@@ -43,7 +70,7 @@ struct ContentView: View {
                     systemImage: isRecording ? "stop.circle.fill" : "record.circle"
                 ) {
                     if isRecording {
-                        status = "녹화를 마치는 중…"
+                        status = .processing("녹화를 마치는 중…")
                         ScreenRecorder.stop()
                     } else {
                         recordScreen()
@@ -83,20 +110,20 @@ struct ContentView: View {
         ) { result in
             guard case let .success(urls) = result, let url = urls.first else { return }
             sourceURL = url
-            status = url.lastPathComponent
+            status = .ready(url.lastPathComponent)
         }
     }
 
     private func recordScreen() {
         guard !isWorking, !isSelecting, !isRecording else { return }
         isSelecting = true
-        status = "드래그하여 녹화 영역을 선택하세요."
+        status = .selecting
         let appWindow = NSApp.keyWindow
 
         Task {
             guard let region = await AreaSelector.select(on: appWindow?.screen) else {
                 isSelecting = false
-                status = "녹화를 취소했습니다."
+                status = .idle("녹화를 취소했습니다.")
                 return
             }
             isSelecting = false
@@ -108,14 +135,14 @@ struct ContentView: View {
                 .appendingPathComponent("video-to-gif-\(UUID().uuidString).mov")
 
             do {
-                status = "녹화 중 · 메뉴 막대의 정지 버튼 또는 ⌘⌃Esc로 끝내세요."
+                status = .recording
                 try await ScreenRecorder.record(to: url, region: region)
                 sourceURL = url
-                status = "녹화 완료 · GIF로 저장할 수 있습니다."
+                status = .success("녹화 완료 · GIF로 저장할 수 있습니다.")
             } catch is CancellationError {
-                status = "녹화를 취소했습니다."
+                status = .idle("녹화를 취소했습니다.")
             } catch {
-                status = error.localizedDescription
+                status = .failure(error.localizedDescription)
             }
         }
     }
@@ -129,14 +156,14 @@ struct ContentView: View {
         guard panel.runModal() == .OK, let outputURL = panel.url else { return }
 
         isWorking = true
-        status = "GIF로 변환하는 중…"
+        status = .processing("GIF로 변환하는 중…")
 
         Task {
             do {
                 let frameCount = try await GIFConverter.convert(sourceURL, to: outputURL)
-                status = "저장 완료 · \(frameCount)프레임 · \(outputURL.lastPathComponent)"
+                status = .success("저장 완료 · \(frameCount)프레임 · \(outputURL.lastPathComponent)")
             } catch {
-                status = error.localizedDescription
+                status = .failure(error.localizedDescription)
             }
             isWorking = false
         }
