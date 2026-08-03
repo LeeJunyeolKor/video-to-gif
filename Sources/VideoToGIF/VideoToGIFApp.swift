@@ -49,7 +49,7 @@ struct ContentView: View {
                         recordScreen()
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .tint(isRecording ? .red : .accentColor)
                 .disabled(isWorking || isSelecting)
 
