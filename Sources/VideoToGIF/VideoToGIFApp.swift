@@ -50,7 +50,7 @@ struct ContentView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(isRecording ? .red : .blue)
+                .tint(isRecording ? .red : .accentColor)
                 .disabled(isWorking || isSelecting)
 
                 Button("MOV 파일 선택", systemImage: "movieclapper") {
@@ -71,6 +71,10 @@ struct ContentView: View {
             }
         }
         .padding(32)
+        .onAppear {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+        }
         .fileImporter(
             isPresented: $isImporterPresented,
             allowedContentTypes: [.movie],
