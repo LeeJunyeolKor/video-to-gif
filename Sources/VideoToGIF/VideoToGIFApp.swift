@@ -118,7 +118,9 @@ struct ContentView: View {
         guard !isWorking, !isSelecting, !isRecording else { return }
         isSelecting = true
         status = .selecting
-        let appWindow = NSApp.keyWindow
+        let appWindow = NSApp.keyWindow ?? NSApp.windows.first {
+            $0.canBecomeMain && !($0 is NSPanel)
+        }
 
         Task {
             guard let region = await AreaSelector.select(on: appWindow?.screen) else {
@@ -128,14 +130,20 @@ struct ContentView: View {
             }
             isSelecting = false
             isRecording = true
-            defer { isRecording = false }
-            appWindow?.makeKeyAndOrderFront(nil)
+            status = .recording
+            appWindow?.orderOut(nil)
+            NSApp.hide(nil)
+            defer {
+                isRecording = false
+                NSApp.unhide(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                appWindow?.makeKeyAndOrderFront(nil)
+            }
 
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("video-to-gif-\(UUID().uuidString).mov")
 
             do {
-                status = .recording
                 try await ScreenRecorder.record(to: url, region: region)
                 sourceURL = url
                 status = .success("녹화 완료 · GIF로 저장할 수 있습니다.")
