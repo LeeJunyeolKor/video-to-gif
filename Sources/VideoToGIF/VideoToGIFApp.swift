@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
@@ -44,23 +45,51 @@ struct ContentView: View {
     @State private var isSelecting = false
     @State private var isRecording = false
     @State private var isImporterPresented = false
+    @State private var player: AVPlayer?
+    @State private var duration = 0.0
+    @State private var trimStart = 0.0
+    @State private var trimEnd = 0.0
 
     var body: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "rectangle.dashed.badge.record")
-                .font(.system(size: 58))
-                .foregroundStyle(.secondary)
+        VStack(spacing: sourceURL == nil ? 24 : 10) {
+            if let player {
+                VideoPreview(player: player)
+                    .frame(height: 150)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                Image(systemName: "rectangle.dashed.badge.record")
+                    .font(.system(size: 58))
+                    .foregroundStyle(.secondary)
 
-            VStack(spacing: 8) {
                 Text("Video to GIF")
                     .font(.largeTitle.bold())
-                HStack(spacing: 6) {
-                    Image(systemName: status.presentation.symbolName)
-                        .foregroundStyle(status.presentation.color)
-                    Text(status.presentation.message)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(3)
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: status.presentation.symbolName)
+                    .foregroundStyle(status.presentation.color)
+                Text(status.presentation.message)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+            }
+
+            if duration > 0 {
+                VStack(spacing: 4) {
+                    trimSlider(
+                        "시작",
+                        value: Binding(
+                            get: { trimStart },
+                            set: { trimStart = min($0, trimEnd) }
+                        )
+                    )
+                    trimSlider(
+                        "끝",
+                        value: Binding(
+                            get: { trimEnd },
+                            set: { trimEnd = max($0, trimStart) }
+                        )
+                    )
                 }
             }
 
@@ -85,12 +114,14 @@ struct ContentView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(isWorking || isSelecting || isRecording)
-            }
 
-            Button("GIF로 저장", systemImage: "square.and.arrow.down") {
-                saveGIF()
+                Button("GIF로 저장", systemImage: "square.and.arrow.down") {
+                    saveGIF()
+                }
+                .disabled(
+                    sourceURL == nil || trimEnd <= trimStart || isWorking || isSelecting || isRecording
+                )
             }
-            .disabled(sourceURL == nil || isWorking || isSelecting || isRecording)
 
             if isWorking || isSelecting {
                 ProgressView()
@@ -109,13 +140,66 @@ struct ContentView: View {
             allowsMultipleSelection: false
         ) { result in
             guard case let .success(urls) = result, let url = urls.first else { return }
-            sourceURL = url
-            status = .ready(url.lastPathComponent)
+            loadSource(url)
+        }
+    }
+
+    private func trimSlider(_ label: String, value: Binding<Double>) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .frame(width: 28, alignment: .leading)
+            Slider(
+                value: value,
+                in: 0...duration,
+                onEditingChanged: { editing in
+                    guard !editing else { return }
+                    player?.seek(
+                        to: CMTime(seconds: value.wrappedValue, preferredTimescale: 600),
+                        toleranceBefore: .zero,
+                        toleranceAfter: .zero
+                    )
+                }
+            )
+            .accessibilityLabel(label)
+            Text(formatTime(value.wrappedValue))
+                .monospacedDigit()
+                .frame(width: 46, alignment: .trailing)
+        }
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        String(format: "%d:%04.1f", Int(seconds) / 60, seconds.truncatingRemainder(dividingBy: 60))
+    }
+
+    private func loadSource(_ url: URL) {
+        player?.pause()
+        sourceURL = url
+        player = AVPlayer(url: url)
+        duration = 0
+        trimStart = 0
+        trimEnd = 0
+        status = .processing("영상 정보를 불러오는 중…")
+
+        Task {
+            do {
+                let seconds = try await AVURLAsset(url: url).load(.duration).seconds
+                guard sourceURL == url else { return }
+                guard seconds.isFinite, seconds > 0 else { throw ConversionError.invalidVideo }
+                duration = seconds
+                trimEnd = seconds
+                status = .ready(url.lastPathComponent)
+            } catch {
+                guard sourceURL == url else { return }
+                sourceURL = nil
+                player = nil
+                status = .failure(error.localizedDescription)
+            }
         }
     }
 
     private func recordScreen() {
         guard !isWorking, !isSelecting, !isRecording else { return }
+        player?.pause()
         isSelecting = true
         status = .selecting
         let appWindow = NSApp.keyWindow ?? NSApp.windows.first {
@@ -145,8 +229,7 @@ struct ContentView: View {
 
             do {
                 try await ScreenRecorder.record(to: url, region: region)
-                sourceURL = url
-                status = .success("녹화 완료 · GIF로 저장할 수 있습니다.")
+                loadSource(url)
             } catch is CancellationError {
                 status = .idle("녹화를 취소했습니다.")
             } catch {
@@ -157,6 +240,7 @@ struct ContentView: View {
 
     private func saveGIF() {
         guard let sourceURL else { return }
+        player?.pause()
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.gif]
@@ -168,12 +252,38 @@ struct ContentView: View {
 
         Task {
             do {
-                let frameCount = try await GIFConverter.convert(sourceURL, to: outputURL)
+                let range = CMTimeRange(
+                    start: CMTime(seconds: trimStart, preferredTimescale: 600),
+                    end: CMTime(seconds: trimEnd, preferredTimescale: 600)
+                )
+                let frameCount = try await GIFConverter.convert(
+                    sourceURL,
+                    to: outputURL,
+                    timeRange: range
+                )
                 status = .success("저장 완료 · \(frameCount)프레임 · \(outputURL.lastPathComponent)")
             } catch {
                 status = .failure(error.localizedDescription)
             }
             isWorking = false
+        }
+    }
+}
+
+private struct VideoPreview: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.controlsStyle = .inline
+        view.videoGravity = .resizeAspect
+        view.player = player
+        return view
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player {
+            view.player = player
         }
     }
 }
@@ -411,17 +521,32 @@ enum GIFConverter {
     static let framesPerSecond = 12.0
     static let maximumSize = CGSize(width: 960, height: 960)
 
-    static func frameTimes(duration: Double, fps: Double = framesPerSecond) -> [CMTime] {
-        guard duration.isFinite, duration > 0, fps.isFinite, fps > 0 else { return [] }
-        return (0..<max(1, Int(duration * fps))).map {
-            CMTime(seconds: Double($0) / fps, preferredTimescale: 600)
+    static func frameTimes(in range: CMTimeRange, fps: Double = framesPerSecond) -> [CMTime] {
+        let start = range.start.seconds
+        let duration = range.duration.seconds
+        guard range.isValid, !range.isEmpty,
+              start.isFinite, duration.isFinite, duration > 0,
+              fps.isFinite, fps > 0 else { return [] }
+
+        let count = max(1, Int((duration * fps).rounded(.up)))
+        return (0..<count).compactMap {
+            let seconds = start + Double($0) / fps
+            return seconds < start + duration
+                ? CMTime(seconds: seconds, preferredTimescale: 600)
+                : nil
         }
     }
 
-    static func convert(_ sourceURL: URL, to outputURL: URL) async throws -> Int {
+    static func convert(
+        _ sourceURL: URL,
+        to outputURL: URL,
+        timeRange: CMTimeRange? = nil
+    ) async throws -> Int {
         let asset = AVURLAsset(url: sourceURL)
-        let duration = try await asset.load(.duration).seconds
-        let times = frameTimes(duration: duration)
+        let duration = try await asset.load(.duration)
+        let assetRange = CMTimeRange(start: .zero, duration: duration)
+        let range = CMTimeRangeGetIntersection(assetRange, otherRange: timeRange ?? assetRange)
+        let times = frameTimes(in: range)
         guard !times.isEmpty else { throw ConversionError.invalidVideo }
 
         let generator = AVAssetImageGenerator(asset: asset)

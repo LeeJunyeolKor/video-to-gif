@@ -5,9 +5,16 @@ import Testing
 @testable import VideoToGIF
 
 @Test func frameSchedule() {
-    let times = GIFConverter.frameTimes(duration: 1, fps: 4)
+    let fullRange = CMTimeRange(start: .zero, duration: CMTime(seconds: 1, preferredTimescale: 600))
+    let times = GIFConverter.frameTimes(in: fullRange, fps: 4)
     #expect(times.map(\.seconds) == [0, 0.25, 0.5, 0.75])
-    #expect(GIFConverter.frameTimes(duration: 0).isEmpty)
+
+    let trimmedRange = CMTimeRange(
+        start: CMTime(seconds: 0.25, preferredTimescale: 600),
+        duration: CMTime(seconds: 0.5, preferredTimescale: 600)
+    )
+    #expect(GIFConverter.frameTimes(in: trimmedRange, fps: 4).map(\.seconds) == [0.25, 0.5])
+    #expect(GIFConverter.frameTimes(in: .zero).isEmpty)
 }
 
 @Test func activityStatusPresentation() {
