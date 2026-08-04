@@ -30,7 +30,7 @@ enum ActivityStatus {
         case let .ready(message): (message, "movieclapper", .accentColor)
         case .selecting: ("드래그하여 녹화 영역을 선택하세요.", "viewfinder", .accentColor)
         case .recording:
-            ("녹화 중 · 메뉴 막대의 정지 버튼 또는 ⌘⌃Esc로 끝내세요.", "record.circle.fill", .red)
+            ("녹화 중 · 최대 30초 · 메뉴 막대의 정지 버튼 또는 ⌘⌃Esc로 끝내세요.", "record.circle.fill", .red)
         case let .processing(message): (message, "arrow.triangle.2.circlepath", .accentColor)
         case let .success(message): (message, "checkmark.circle.fill", .green)
         case let .failure(message): (message, "exclamationmark.triangle.fill", .red)
@@ -260,6 +260,11 @@ struct ContentView: View {
 
     private func recordScreen() {
         guard !isWorking, !isSelecting, !isRecording else { return }
+        guard ScreenRecorder.requestPermission() else {
+            status = .failure("화면 기록 권한이 필요합니다.")
+            ScreenRecorder.showPermissionAlert()
+            return
+        }
         player?.pause()
         isSelecting = true
         status = .selecting
@@ -376,6 +381,7 @@ private struct VideoPreview: NSViewRepresentable {
 
 @MainActor
 enum ScreenRecorder {
+    nonisolated static let maximumDurationSeconds = 30
     private static var stopInput: FileHandle?
     private static var statusItem: NSStatusItem?
     private static var menuTarget: RecordingMenuTarget?
@@ -412,29 +418,62 @@ enum ScreenRecorder {
         try process.run()
         stopInput = input.fileHandleForWriting
         showStopButton()
+        // ponytail: screencapture's -V can miss its deadline on secondary displays.
+        let timeout = Task {
+            try? await Task.sleep(for: .seconds(maximumDurationSeconds))
+            guard !Task.isCancelled else { return }
+            stop()
+        }
 
         await withCheckedContinuation { continuation in
             process.terminationHandler = { _ in continuation.resume() }
         }
+        timeout.cancel()
         showStartButton()
         try? stopInput?.close()
         stopInput = nil
 
-        guard process.terminationStatus == 0,
-              FileManager.default.fileExists(atPath: outputURL.path) else {
-            throw CancellationError()
+        guard process.terminationStatus == 0 else {
+            throw RecordingError.captureFailed(process.terminationStatus)
+        }
+        guard FileManager.default.fileExists(atPath: outputURL.path) else {
+            throw RecordingError.outputMissing
         }
     }
 
     nonisolated static func arguments(outputURL: URL, region: CGRect, mainScreenMaxY: CGFloat) -> [String] {
-        let x = Int(region.minX.rounded(.down))
-        let y = Int((mainScreenMaxY - region.maxY).rounded(.down))
-        let width = Int(region.width.rounded(.down))
-        let height = Int(region.height.rounded(.down))
+        let captureRect = CGRect(
+            x: region.minX,
+            y: mainScreenMaxY - region.maxY,
+            width: region.width,
+            height: region.height
+        ).integral
         return [
             "-q", "/dev/null", "/usr/sbin/screencapture",
-            "-v", "-R\(x),\(y),\(width),\(height)", outputURL.path,
+            "-v", "-V\(maximumDurationSeconds)",
+            "-R\(Int(captureRect.minX)),\(Int(captureRect.minY)),\(Int(captureRect.width)),\(Int(captureRect.height))",
+            outputURL.path,
         ]
+    }
+
+    nonisolated static func requestPermission(
+        preflight: () -> Bool = { CGPreflightScreenCaptureAccess() },
+        request: () -> Bool = { CGRequestScreenCaptureAccess() }
+    ) -> Bool {
+        preflight() || request()
+    }
+
+    static func showPermissionAlert() {
+        let alert = NSAlert()
+        alert.messageText = "화면 기록 권한이 필요합니다."
+        alert.informativeText = "시스템 설정 → 개인정보 보호 및 보안 → 화면 및 시스템 오디오 기록에서 Video to GIF를 허용한 뒤 앱을 다시 여세요."
+        alert.addButton(withTitle: "시스템 설정 열기")
+        alert.addButton(withTitle: "확인")
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let settingsURL = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: "com.apple.systempreferences"
+              ) else { return }
+        NSWorkspace.shared.open(settingsURL)
     }
 
     static func stop() {
@@ -455,7 +494,7 @@ enum ScreenRecorder {
             accessibilityDescription: "녹화 중지"
         )
         statusItem?.button?.contentTintColor = .systemRed
-        statusItem?.button?.toolTip = "녹화 중지"
+        statusItem?.button?.toolTip = "녹화 중지 · 최대 \(maximumDurationSeconds)초"
         statusItem?.button?.isEnabled = true
     }
 
@@ -470,6 +509,18 @@ enum ScreenRecorder {
     }
 }
 
+enum RecordingError: LocalizedError {
+    case captureFailed(Int32)
+    case outputMissing
+
+    var errorDescription: String? {
+        switch self {
+        case let .captureFailed(status): "화면 녹화에 실패했습니다. (종료 코드 \(status))"
+        case .outputMissing: "녹화 파일이 생성되지 않았습니다."
+        }
+    }
+}
+
 @MainActor
 private final class RecordingMenuTarget: NSObject {
     @objc func toggle() {
@@ -479,43 +530,56 @@ private final class RecordingMenuTarget: NSObject {
 
 @MainActor
 enum AreaSelector {
-    private static var window: AreaSelectionPanel?
+    private static var windows: [AreaSelectionPanel] = []
 
     static func select(on preferredScreen: NSScreen?) async -> CGRect? {
-        // ponytail: one display per selection; use one panel per NSScreen if cross-display drags matter.
-        guard let screen = preferredScreen ?? NSScreen.main else {
-            return nil
-        }
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return nil }
+        let activationPolicy = NSApp.activationPolicy()
+        NSApp.setActivationPolicy(.accessory)
 
         return await withCheckedContinuation { continuation in
-            let panel = AreaSelectionPanel(
-                contentRect: screen.frame,
-                styleMask: .borderless,
-                backing: .buffered,
-                defer: false
-            )
-            let view = AreaSelectionView(frame: CGRect(origin: .zero, size: screen.frame.size))
-
-            panel.contentView = view
-            panel.backgroundColor = .clear
-            panel.isOpaque = false
-            panel.level = .screenSaver
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            panel.hidesOnDeactivate = false
-            panel.isReleasedWhenClosed = false
-            window = panel
-
-            view.onFinish = { [weak panel] rect in
-                let screenRect = rect.flatMap { panel?.convertToScreen($0) }
-                panel?.close()
-                window = nil
-                continuation.resume(returning: screenRect)
+            var didFinish = false
+            let finish: (CGRect?) -> Void = { result in
+                guard !didFinish else { return }
+                didFinish = true
+                windows.forEach { $0.close() }
+                windows.removeAll()
+                NSApp.setActivationPolicy(activationPolicy)
+                continuation.resume(returning: result)
             }
 
-            NSApp.activate(ignoringOtherApps: true)
-            panel.orderFrontRegardless()
-            panel.makeKey()
-            panel.makeFirstResponder(view)
+            windows = screens.map { screen in
+                let panel = AreaSelectionPanel(
+                    contentRect: screen.frame,
+                    styleMask: [.borderless, .nonactivatingPanel],
+                    backing: .buffered,
+                    defer: false
+                )
+                let view = AreaSelectionView(frame: CGRect(origin: .zero, size: screen.frame.size))
+
+                panel.contentView = view
+                panel.backgroundColor = .clear
+                panel.isOpaque = false
+                panel.isFloatingPanel = true
+                panel.level = .screenSaver
+                panel.collectionBehavior = [
+                    .canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary,
+                ]
+                panel.hidesOnDeactivate = false
+                panel.isReleasedWhenClosed = false
+                view.onFinish = { [weak panel] rect in
+                    finish(rect.flatMap { panel?.convertToScreen($0) })
+                }
+                return panel
+            }
+
+            let preferredPanel = preferredScreen.flatMap { preferred in
+                windows.first { $0.frame == preferred.frame }
+            } ?? windows.first
+            windows.forEach { $0.orderFrontRegardless() }
+            preferredPanel?.makeKey()
+            preferredPanel?.makeFirstResponder(preferredPanel?.contentView)
         }
     }
 }

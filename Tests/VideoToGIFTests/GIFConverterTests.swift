@@ -68,8 +68,27 @@ import UniformTypeIdentifiers
     )
     #expect(arguments == [
         "-q", "/dev/null", "/usr/sbin/screencapture",
-        "-v", "-R10,620,320,200", "/tmp/capture.mov",
+        "-v", "-V30", "-R10,620,320,200", "/tmp/capture.mov",
     ])
+
+    let secondaryDisplayArguments = ScreenRecorder.arguments(
+        outputURL: URL(fileURLWithPath: "/tmp/capture.mov"),
+        region: CGRect(x: -100.5, y: 950.25, width: 320.25, height: 200.25),
+        mainScreenMaxY: 900
+    )
+    #expect(secondaryDisplayArguments.contains("-R-101,-251,321,201"))
+}
+
+@Test func screenRecordingPermissionRequest() {
+    var requested = false
+    #expect(ScreenRecorder.requestPermission(preflight: { true }, request: {
+        requested = true
+        return false
+    }))
+    #expect(!requested)
+
+    #expect(ScreenRecorder.requestPermission(preflight: { false }, request: { true }))
+    #expect(!ScreenRecorder.requestPermission(preflight: { false }, request: { false }))
 }
 
 @Test @MainActor func dragSelectsRecordingArea() {
