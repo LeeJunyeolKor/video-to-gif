@@ -98,6 +98,24 @@ import UniformTypeIdentifiers
     #expect(!ScreenRecorder.requestPermission(preflight: { false }, request: { false }))
 }
 
+@Test func reusesOnlyRegionsInsideAConnectedScreen() {
+    let screens = [
+        CGRect(x: 0, y: 0, width: 1000, height: 800),
+        CGRect(x: -800, y: 0, width: 800, height: 600),
+    ]
+    let region = CGRect(x: -700, y: 100, width: 320, height: 240)
+
+    #expect(AreaSelector.reusableRegion(region, in: screens) == region)
+    #expect(AreaSelector.reusableRegion(
+        CGRect(x: -100, y: 100, width: 200, height: 200),
+        in: screens
+    ) == nil)
+    #expect(AreaSelector.reusableRegion(
+        CGRect(x: 10, y: 10, width: 10, height: 10),
+        in: screens
+    ) == nil)
+}
+
 @Test @MainActor func dragSelectsRecordingArea() {
     let view = AreaSelectionView(frame: CGRect(x: 0, y: 0, width: 500, height: 400))
     var selected: CGRect?

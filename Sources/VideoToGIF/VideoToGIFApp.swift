@@ -1,5 +1,6 @@
 import AVFoundation
 import AVKit
+import Carbon
 import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
@@ -30,7 +31,7 @@ enum ActivityStatus {
         case let .ready(message): (message, "movieclapper", .accentColor)
         case .selecting: ("드래그하여 녹화 영역을 선택하세요.", "viewfinder", .accentColor)
         case .recording:
-            ("녹화 중 · 최대 30초 · 메뉴 막대의 정지 버튼 또는 ⌘⌃Esc로 끝내세요.", "record.circle.fill", .red)
+            ("녹화 중 · 최대 30초 · 메뉴 막대의 정지 버튼 또는 ⌃⌘G로 끝내세요.", "record.circle.fill", .red)
         case let .processing(message): (message, "arrow.triangle.2.circlepath", .accentColor)
         case let .success(message): (message, "checkmark.circle.fill", .green)
         case let .failure(message): (message, "exclamationmark.triangle.fill", .red)
@@ -53,6 +54,7 @@ struct ContentView: View {
     @State private var sourceSize = CGSize.zero
     @State private var framesPerSecond = Int(GIFConverter.framesPerSecond)
     @State private var maximumDimension = Int(GIFConverter.defaultMaximumDimension)
+    @State private var lastRegion: CGRect?
 
     var body: some View {
         VStack(spacing: sourceURL == nil ? 24 : 10) {
@@ -136,6 +138,7 @@ struct ContentView: View {
                 .buttonStyle(.bordered)
                 .tint(isRecording ? .red : .accentColor)
                 .disabled(isWorking || isSelecting)
+                .help("⌃⌘G: 최근 영역에서 바로 녹화")
 
                 Button("MOV 파일 선택", systemImage: "movieclapper") {
                     isImporterPresented = true
@@ -168,7 +171,7 @@ struct ContentView: View {
         .onAppear {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
-            ScreenRecorder.install { recordScreen() }
+            ScreenRecorder.install { recordScreen(reusingLastRegion: $0) }
         }
         .fileImporter(
             isPresented: $isImporterPresented,
@@ -258,7 +261,7 @@ struct ContentView: View {
         }
     }
 
-    private func recordScreen() {
+    private func recordScreen(reusingLastRegion: Bool = false) {
         guard !isWorking, !isSelecting, !isRecording else { return }
         guard ScreenRecorder.requestPermission() else {
             status = .failure("화면 기록 권한이 필요합니다.")
@@ -266,26 +269,37 @@ struct ContentView: View {
             return
         }
         player?.pause()
-        isSelecting = true
-        status = .selecting
         let appWindow = NSApp.keyWindow ?? NSApp.windows.first {
             $0.canBecomeMain && !($0 is NSPanel)
         }
+        let reusableRegion = reusingLastRegion
+            ? AreaSelector.reusableRegion(lastRegion, in: NSScreen.screens.map(\.frame))
+            : nil
+        isSelecting = true
+        status = reusableRegion == nil
+            ? .selecting
+            : .processing("최근 영역에서 녹화를 시작하는 중…")
 
         Task {
-            guard let region = await AreaSelector.select(on: appWindow?.screen) else {
-                isSelecting = false
-                status = .idle("녹화를 취소했습니다.")
-                return
+            let region: CGRect
+            if let reusableRegion {
+                region = reusableRegion
+            } else {
+                guard let selectedRegion = await AreaSelector.select(on: appWindow?.screen) else {
+                    isSelecting = false
+                    status = .idle("녹화를 취소했습니다.")
+                    return
+                }
+                region = selectedRegion
+                lastRegion = selectedRegion
             }
             isSelecting = false
             isRecording = true
             status = .recording
             appWindow?.orderOut(nil)
-            NSApp.hide(nil)
+            NSApp.deactivate()
             defer {
                 isRecording = false
-                NSApp.unhide(nil)
                 NSApp.activate(ignoringOtherApps: true)
                 appWindow?.makeKeyAndOrderFront(nil)
             }
@@ -385,9 +399,11 @@ enum ScreenRecorder {
     private static var stopInput: FileHandle?
     private static var statusItem: NSStatusItem?
     private static var menuTarget: RecordingMenuTarget?
-    private static var startAction: (() -> Void)?
+    private static var startAction: ((Bool) -> Void)?
+    private static var hotKey: EventHotKeyRef?
+    private static var hotKeyHandler: EventHandlerRef?
 
-    static func install(startAction: @escaping () -> Void) {
+    static func install(startAction: @escaping (Bool) -> Void) {
         self.startAction = startAction
         guard statusItem == nil else { return }
 
@@ -397,11 +413,13 @@ enum ScreenRecorder {
         item.button?.action = #selector(RecordingMenuTarget.toggle)
         statusItem = item
         menuTarget = target
+        installShortcut()
         showStartButton()
     }
 
     static func record(to outputURL: URL, region: CGRect) async throws {
         guard let mainScreen = NSScreen.screens.first else { throw CancellationError() }
+        reinstallShortcut()
 
         let process = Process()
         let input = Pipe()
@@ -485,7 +503,49 @@ enum ScreenRecorder {
     }
 
     static func toggle() {
-        stopInput == nil ? startAction?() : stop()
+        stopInput == nil ? startAction?(false) : stop()
+    }
+
+    static func handleShortcut() {
+        stopInput == nil ? startAction?(true) : stop()
+    }
+
+    static func reinstallShortcut() {
+        if let hotKey { UnregisterEventHotKey(hotKey) }
+        if let hotKeyHandler { RemoveEventHandler(hotKeyHandler) }
+        hotKey = nil
+        hotKeyHandler = nil
+        installShortcut()
+    }
+
+    private static func installShortcut() {
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let target = GetApplicationEventTarget()
+        guard InstallEventHandler(
+            target,
+            recordingHotKeyHandler,
+            1,
+            &eventType,
+            nil,
+            &hotKeyHandler
+        ) == noErr else { return }
+
+        let identifier = EventHotKeyID(signature: recordingHotKeySignature, id: 1)
+        guard RegisterEventHotKey(
+            UInt32(kVK_ANSI_G),
+            UInt32(cmdKey | controlKey),
+            identifier,
+            target,
+            OptionBits(kEventHotKeyExclusive),
+            &hotKey
+        ) == noErr else {
+            if let hotKeyHandler { RemoveEventHandler(hotKeyHandler) }
+            hotKeyHandler = nil
+            return
+        }
     }
 
     private static func showStopButton() {
@@ -504,9 +564,29 @@ enum ScreenRecorder {
             accessibilityDescription: "화면 영역 녹화"
         )
         statusItem?.button?.contentTintColor = nil
-        statusItem?.button?.toolTip = "화면 영역 녹화"
+        statusItem?.button?.toolTip = "화면 영역 녹화 · ⌃⌘G 최근 영역"
         statusItem?.button?.isEnabled = true
     }
+}
+
+private let recordingHotKeySignature: OSType = 0x56544746
+private let recordingHotKeyHandler: EventHandlerUPP = { _, event, _ in
+    guard let event else { return OSStatus(eventNotHandledErr) }
+    var identifier = EventHotKeyID()
+    guard GetEventParameter(
+        event,
+        EventParamName(kEventParamDirectObject),
+        EventParamType(typeEventHotKeyID),
+        nil,
+        MemoryLayout<EventHotKeyID>.size,
+        nil,
+        &identifier
+    ) == noErr,
+    identifier.signature == recordingHotKeySignature,
+    identifier.id == 1 else { return OSStatus(eventNotHandledErr) }
+
+    Task { @MainActor in ScreenRecorder.handleShortcut() }
+    return noErr
 }
 
 enum RecordingError: LocalizedError {
@@ -532,6 +612,14 @@ private final class RecordingMenuTarget: NSObject {
 enum AreaSelector {
     private static var windows: [AreaSelectionPanel] = []
 
+    nonisolated static func reusableRegion(_ region: CGRect?, in screenFrames: [CGRect]) -> CGRect? {
+        guard let region,
+              region.width >= 16,
+              region.height >= 16,
+              screenFrames.contains(where: { $0.contains(region) }) else { return nil }
+        return region
+    }
+
     static func select(on preferredScreen: NSScreen?) async -> CGRect? {
         let screens = NSScreen.screens
         guard !screens.isEmpty else { return nil }
@@ -546,6 +634,10 @@ enum AreaSelector {
                 windows.forEach { $0.close() }
                 windows.removeAll()
                 NSApp.setActivationPolicy(activationPolicy)
+                // Refresh after AppKit finishes the activation policy transition.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    ScreenRecorder.reinstallShortcut()
+                }
                 continuation.resume(returning: result)
             }
 
