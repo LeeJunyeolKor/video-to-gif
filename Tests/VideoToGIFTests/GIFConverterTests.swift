@@ -18,6 +18,18 @@ import UniformTypeIdentifiers
     #expect(GIFConverter.frameTimes(in: .zero).isEmpty)
 }
 
+@Test func trimRangeClampsHandlesAndMapsPositions() {
+    #expect(TrimRange.clampedStart(-1, end: 8, duration: 10, minimumDuration: 0.5) == 0)
+    #expect(TrimRange.clampedStart(9, end: 8, duration: 10, minimumDuration: 0.5) == 7.5)
+    #expect(TrimRange.clampedEnd(11, start: 2, duration: 10, minimumDuration: 0.5) == 10)
+    #expect(TrimRange.clampedEnd(1, start: 2, duration: 10, minimumDuration: 0.5) == 2.5)
+
+    #expect(TrimRange.time(at: 55, width: 110, duration: 10, inset: 5) == 5)
+    #expect(TrimRange.time(at: -1, width: 110, duration: 10, inset: 5) == 0)
+    #expect(TrimRange.time(at: 111, width: 110, duration: 10, inset: 5) == 10)
+    #expect(TrimRange.position(for: 5, width: 110, duration: 10, inset: 5) == 55)
+}
+
 @Test func estimatedGIFSizeUsesDurationFPSAndOutputSize() {
     let base = GIFConverter.estimatedFileSize(
         duration: 2,

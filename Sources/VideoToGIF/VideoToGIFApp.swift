@@ -81,21 +81,15 @@ struct ContentView: View {
                     .lineLimit(2)
             }
 
-            if duration > 0 {
+            if duration > 0, let sourceURL {
                 VStack(spacing: 4) {
-                    trimSlider(
-                        "시작",
-                        value: Binding(
-                            get: { trimStart },
-                            set: { trimStart = min($0, trimEnd) }
-                        )
-                    )
-                    trimSlider(
-                        "끝",
-                        value: Binding(
-                            get: { trimEnd },
-                            set: { trimEnd = max($0, trimStart) }
-                        )
+                    TrimTimeline(
+                        sourceURL: sourceURL,
+                        duration: duration,
+                        framesPerSecond: framesPerSecond,
+                        start: $trimStart,
+                        end: $trimEnd,
+                        onSeek: seek
                     )
                     HStack(spacing: 8) {
                         Picker("FPS", selection: $framesPerSecond) {
@@ -184,31 +178,12 @@ struct ContentView: View {
         }
     }
 
-    private func trimSlider(_ label: String, value: Binding<Double>) -> some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .frame(width: 28, alignment: .leading)
-            Slider(
-                value: value,
-                in: 0...duration,
-                onEditingChanged: { editing in
-                    guard !editing else { return }
-                    player?.seek(
-                        to: CMTime(seconds: value.wrappedValue, preferredTimescale: 600),
-                        toleranceBefore: .zero,
-                        toleranceAfter: .zero
-                    )
-                }
-            )
-            .accessibilityLabel(label)
-            Text(formatTime(value.wrappedValue))
-                .monospacedDigit()
-                .frame(width: 46, alignment: .trailing)
-        }
-    }
-
-    private func formatTime(_ seconds: Double) -> String {
-        String(format: "%d:%04.1f", Int(seconds) / 60, seconds.truncatingRemainder(dividingBy: 60))
+    private func seek(to seconds: Double) {
+        player?.seek(
+            to: CMTime(seconds: seconds, preferredTimescale: 600),
+            toleranceBefore: .zero,
+            toleranceAfter: .zero
+        )
     }
 
     private var estimatedOutputBytes: Int64 {
@@ -391,6 +366,282 @@ private struct VideoPreview: NSViewRepresentable {
         if view.player !== player {
             view.player = player
         }
+    }
+}
+
+enum TrimRange {
+    static func clampedStart(
+        _ proposed: Double,
+        end: Double,
+        duration: Double,
+        minimumDuration: Double
+    ) -> Double {
+        guard duration.isFinite, duration > 0 else { return 0 }
+        let safeEnd = min(max(end, 0), duration)
+        let minimumDuration = min(max(minimumDuration, 0), duration)
+        let upperBound = max(0, safeEnd - minimumDuration)
+        return min(max(proposed.isFinite ? proposed : 0, 0), upperBound)
+    }
+
+    static func clampedEnd(
+        _ proposed: Double,
+        start: Double,
+        duration: Double,
+        minimumDuration: Double
+    ) -> Double {
+        guard duration.isFinite, duration > 0 else { return 0 }
+        let safeStart = min(max(start, 0), duration)
+        let minimumDuration = min(max(minimumDuration, 0), duration)
+        let lowerBound = min(duration, safeStart + minimumDuration)
+        return max(min(proposed.isFinite ? proposed : duration, duration), lowerBound)
+    }
+
+    static func time(
+        at position: CGFloat,
+        width: CGFloat,
+        duration: Double,
+        inset: CGFloat
+    ) -> Double {
+        let usableWidth = width - inset * 2
+        guard usableWidth.isFinite, usableWidth > 0,
+              duration.isFinite, duration > 0 else { return 0 }
+        let progress = min(max((position - inset) / usableWidth, 0), 1)
+        return Double(progress) * duration
+    }
+
+    static func position(
+        for time: Double,
+        width: CGFloat,
+        duration: Double,
+        inset: CGFloat
+    ) -> CGFloat {
+        let usableWidth = width - inset * 2
+        guard usableWidth.isFinite, usableWidth > 0,
+              duration.isFinite, duration > 0 else { return inset }
+        let progress = min(max(time / duration, 0), 1)
+        return inset + CGFloat(progress) * usableWidth
+    }
+}
+
+private struct TrimTimeline: View {
+    private static let thumbnailCount = 12
+    private static let trackHeight: CGFloat = 72
+    private static let handleHeight: CGFloat = 84
+    private static let handleHitWidth: CGFloat = 28
+
+    let sourceURL: URL
+    let duration: Double
+    let framesPerSecond: Int
+    @Binding var start: Double
+    @Binding var end: Double
+    let onSeek: (Double) -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var thumbnails: [CGImage?] = []
+
+    private var minimumDuration: Double {
+        min(duration, 1 / Double(max(framesPerSecond, 1)))
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            GeometryReader { geometry in
+                let width = geometry.size.width
+                let inset = Self.handleHitWidth / 2
+                let trackWidth = max(1, width - inset * 2)
+                let startX = TrimRange.position(
+                    for: start,
+                    width: width,
+                    duration: duration,
+                    inset: inset
+                )
+                let endX = TrimRange.position(
+                    for: end,
+                    width: width,
+                    duration: duration,
+                    inset: inset
+                )
+                let centerY = Self.handleHeight / 2
+
+                ZStack {
+                    thumbnailStrip(width: trackWidth)
+                        .frame(width: trackWidth, height: Self.trackHeight)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .position(x: width / 2, y: centerY)
+
+                    shade(width: max(0, startX - inset))
+                        .position(x: inset + max(0, startX - inset) / 2, y: centerY)
+                    shade(width: max(0, width - inset - endX))
+                        .position(x: endX + max(0, width - inset - endX) / 2, y: centerY)
+
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.accentColor, lineWidth: 2)
+                        .frame(width: max(1, endX - startX), height: Self.trackHeight)
+                        .position(x: (startX + endX) / 2, y: centerY)
+                        .allowsHitTesting(false)
+
+                    trimHandle(isStart: true)
+                        .position(x: startX, y: centerY)
+                        .gesture(dragGesture(isStart: true, width: width, inset: inset))
+                    trimHandle(isStart: false)
+                        .position(x: endX, y: centerY)
+                        .gesture(dragGesture(isStart: false, width: width, inset: inset))
+                }
+                .coordinateSpace(name: "trimTimeline")
+            }
+            .frame(height: Self.handleHeight)
+
+            HStack {
+                Text("시작 \(formatTime(start))")
+                Spacer()
+                Text("선택 \(formatTime(end - start))")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("끝 \(formatTime(end))")
+            }
+            .font(.caption)
+            .monospacedDigit()
+        }
+        .task(id: sourceURL) {
+            await loadThumbnails()
+        }
+    }
+
+    private func thumbnailStrip(width: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            ForEach(0..<Self.thumbnailCount, id: \.self) { index in
+                thumbnail(at: index)
+                    .frame(
+                        width: width / CGFloat(Self.thumbnailCount),
+                        height: Self.trackHeight
+                    )
+                    .clipped()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func thumbnail(at index: Int) -> some View {
+        if thumbnails.indices.contains(index), let thumbnail = thumbnails[index] {
+            Image(decorative: thumbnail, scale: 1)
+                .resizable()
+                .scaledToFill()
+        } else {
+            Rectangle()
+                .fill(Color.secondary.opacity(0.12))
+        }
+    }
+
+    private func shade(width: CGFloat) -> some View {
+        Rectangle()
+            .fill(.black.opacity(0.55))
+            .frame(width: width, height: Self.trackHeight)
+            .allowsHitTesting(false)
+    }
+
+    private func trimHandle(isStart: Bool) -> some View {
+        ZStack {
+            Color.clear
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.accentColor)
+                .frame(width: 16, height: Self.handleHeight)
+            HStack(spacing: 3) {
+                Capsule().fill(.white.opacity(0.85)).frame(width: 1, height: 18)
+                Capsule().fill(.white.opacity(0.85)).frame(width: 1, height: 18)
+            }
+        }
+        .frame(width: Self.handleHitWidth, height: Self.handleHeight)
+        .contentShape(Rectangle())
+        .accessibilityRepresentation {
+            Slider(
+                value: Binding(
+                    get: { isStart ? start : end },
+                    set: {
+                        isStart
+                            ? updateStart($0, shouldSeek: true)
+                            : updateEnd($0, shouldSeek: true)
+                    }
+                ),
+                in: 0...duration
+            ) {
+                Text(isStart ? "시작 핸들" : "끝 핸들")
+            }
+            .accessibilityLabel(isStart ? "시작 핸들" : "끝 핸들")
+            .accessibilityValue(formatTime(isStart ? start : end))
+        }
+    }
+
+    private func dragGesture(isStart: Bool, width: CGFloat, inset: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("trimTimeline"))
+            .onChanged { value in
+                guard isEnabled else { return }
+                let time = TrimRange.time(
+                    at: value.location.x,
+                    width: width,
+                    duration: duration,
+                    inset: inset
+                )
+                isStart
+                    ? updateStart(time, shouldSeek: false)
+                    : updateEnd(time, shouldSeek: false)
+            }
+            .onEnded { value in
+                guard isEnabled else { return }
+                let time = TrimRange.time(
+                    at: value.location.x,
+                    width: width,
+                    duration: duration,
+                    inset: inset
+                )
+                isStart
+                    ? updateStart(time, shouldSeek: true)
+                    : updateEnd(time, shouldSeek: true)
+            }
+    }
+
+    private func updateStart(_ proposed: Double, shouldSeek: Bool) {
+        let adjusted = TrimRange.clampedStart(
+            proposed,
+            end: end,
+            duration: duration,
+            minimumDuration: minimumDuration
+        )
+        start = adjusted
+        if shouldSeek { onSeek(adjusted) }
+    }
+
+    private func updateEnd(_ proposed: Double, shouldSeek: Bool) {
+        let adjusted = TrimRange.clampedEnd(
+            proposed,
+            start: start,
+            duration: duration,
+            minimumDuration: minimumDuration
+        )
+        end = adjusted
+        if shouldSeek { onSeek(max(start, adjusted - minimumDuration)) }
+    }
+
+    @MainActor
+    private func loadThumbnails() async {
+        thumbnails = [CGImage?](repeating: nil, count: Self.thumbnailCount)
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: sourceURL))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 320, height: 180)
+
+        for index in 0..<Self.thumbnailCount {
+            guard !Task.isCancelled else { return }
+            let seconds = duration * (Double(index) + 0.5) / Double(Self.thumbnailCount)
+            let time = CMTime(seconds: seconds, preferredTimescale: 600)
+            thumbnails[index] = try? await generator.image(at: time).image
+        }
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        String(
+            format: "%d:%04.1f",
+            Int(seconds) / 60,
+            seconds.truncatingRemainder(dividingBy: 60)
+        )
     }
 }
 
