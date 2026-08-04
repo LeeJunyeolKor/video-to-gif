@@ -61,7 +61,7 @@ struct ContentView: View {
         VStack(spacing: sourceURL == nil ? 24 : 10) {
             if let player {
                 VideoPreview(player: player)
-                    .frame(height: 140)
+                    .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
                 Image(systemName: "rectangle.dashed.badge.record")
