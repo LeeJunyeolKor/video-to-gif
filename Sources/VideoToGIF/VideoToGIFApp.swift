@@ -397,6 +397,7 @@ private struct VideoPreview: NSViewRepresentable {
 enum ScreenRecorder {
     nonisolated static let maximumDurationSeconds = 30
     private static var stopInput: FileHandle?
+    private static var stopTask: Task<Void, Never>?
     private static var statusItem: NSStatusItem?
     private static var menuTarget: RecordingMenuTarget?
     private static var startAction: ((Bool) -> Void)?
@@ -447,6 +448,8 @@ enum ScreenRecorder {
             process.terminationHandler = { _ in continuation.resume() }
         }
         timeout.cancel()
+        stopTask?.cancel()
+        stopTask = nil
         showStartButton()
         try? stopInput?.close()
         stopInput = nil
@@ -495,11 +498,22 @@ enum ScreenRecorder {
     }
 
     static func stop() {
-        guard let input = stopInput else { return }
-        stopInput = nil
-        try? input.write(contentsOf: Data([0x78]))
-        try? input.close()
+        guard stopTask == nil, let input = stopInput else { return }
         statusItem?.button?.isEnabled = false
+        stopTask = Task {
+            await sendStopSignals(to: input)
+        }
+    }
+
+    static func sendStopSignals(to input: FileHandle) async {
+        while !Task.isCancelled {
+            do {
+                try input.write(contentsOf: Data([0x78]))
+            } catch {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     static func toggle() {

@@ -98,6 +98,22 @@ import UniformTypeIdentifiers
     #expect(!ScreenRecorder.requestPermission(preflight: { false }, request: { false }))
 }
 
+@Test @MainActor func repeatsStopSignalUntilCancelled() async throws {
+    let pipe = Pipe()
+    let task = Task {
+        await ScreenRecorder.sendStopSignals(to: pipe.fileHandleForWriting)
+    }
+
+    try await Task.sleep(for: .milliseconds(250))
+    task.cancel()
+    await task.value
+    try pipe.fileHandleForWriting.close()
+    let bytes = try pipe.fileHandleForReading.readToEnd() ?? Data()
+
+    #expect(bytes.count >= 2)
+    #expect(bytes.allSatisfy { $0 == 0x78 })
+}
+
 @Test func reusesOnlyRegionsInsideAConnectedScreen() {
     let screens = [
         CGRect(x: 0, y: 0, width: 1000, height: 800),
