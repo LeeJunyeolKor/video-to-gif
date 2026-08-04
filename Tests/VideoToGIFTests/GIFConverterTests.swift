@@ -68,7 +68,7 @@ import UniformTypeIdentifiers
     )
     #expect(arguments == [
         "-q", "/dev/null", "/usr/sbin/screencapture",
-        "-v", "-V30", "-R10,620,320,200", "/tmp/capture.mov",
+        "-v", "-R10,620,320,200", "/tmp/capture.mov",
     ])
 
     let secondaryDisplayArguments = ScreenRecorder.arguments(

@@ -31,7 +31,7 @@ enum ActivityStatus {
         case let .ready(message): (message, "movieclapper", .accentColor)
         case .selecting: ("드래그하여 녹화 영역을 선택하세요.", "viewfinder", .accentColor)
         case .recording:
-            ("녹화 중 · 최대 30초 · 메뉴 막대의 정지 버튼 또는 ⌃⌘G로 끝내세요.", "record.circle.fill", .red)
+            ("녹화 중 · 메뉴 막대의 정지 버튼 또는 ⌃⌘G로 끝내세요.", "record.circle.fill", .red)
         case let .processing(message): (message, "arrow.triangle.2.circlepath", .accentColor)
         case let .success(message): (message, "checkmark.circle.fill", .green)
         case let .failure(message): (message, "exclamationmark.triangle.fill", .red)
@@ -395,7 +395,6 @@ private struct VideoPreview: NSViewRepresentable {
 
 @MainActor
 enum ScreenRecorder {
-    nonisolated static let maximumDurationSeconds = 30
     private static var stopInput: FileHandle?
     private static var stopTask: Task<Void, Never>?
     private static var statusItem: NSStatusItem?
@@ -437,17 +436,10 @@ enum ScreenRecorder {
         try process.run()
         stopInput = input.fileHandleForWriting
         showStopButton()
-        // ponytail: screencapture's -V can miss its deadline on secondary displays.
-        let timeout = Task {
-            try? await Task.sleep(for: .seconds(maximumDurationSeconds))
-            guard !Task.isCancelled else { return }
-            stop()
-        }
 
         await withCheckedContinuation { continuation in
             process.terminationHandler = { _ in continuation.resume() }
         }
-        timeout.cancel()
         stopTask?.cancel()
         stopTask = nil
         showStartButton()
@@ -471,7 +463,7 @@ enum ScreenRecorder {
         ).integral
         return [
             "-q", "/dev/null", "/usr/sbin/screencapture",
-            "-v", "-V\(maximumDurationSeconds)",
+            "-v",
             "-R\(Int(captureRect.minX)),\(Int(captureRect.minY)),\(Int(captureRect.width)),\(Int(captureRect.height))",
             outputURL.path,
         ]
@@ -568,7 +560,7 @@ enum ScreenRecorder {
             accessibilityDescription: "녹화 중지"
         )
         statusItem?.button?.contentTintColor = .systemRed
-        statusItem?.button?.toolTip = "녹화 중지 · 최대 \(maximumDurationSeconds)초"
+        statusItem?.button?.toolTip = "녹화 중지"
         statusItem?.button?.isEnabled = true
     }
 
