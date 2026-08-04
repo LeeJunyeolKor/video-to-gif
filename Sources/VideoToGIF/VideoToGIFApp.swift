@@ -618,7 +618,9 @@ final class AreaSelectionView: NSView {
             border.stroke()
         }
 
-        let instruction = NSString(string: "드래그하여 녹화 영역 선택 · Esc 취소")
+        let instruction = NSString(
+            string: "드래그: 영역 선택 · 더블 클릭 또는 Enter: 이 화면 전체 · Esc: 취소"
+        )
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 16, weight: .semibold),
             .foregroundColor: NSColor.white,
@@ -647,6 +649,10 @@ final class AreaSelectionView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         endPoint = convert(event.locationInWindow, from: nil)
+        if event.clickCount == 2 {
+            finish(bounds)
+            return
+        }
         guard selection.width >= 16, selection.height >= 16 else {
             startPoint = nil
             endPoint = nil
@@ -657,7 +663,11 @@ final class AreaSelectionView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
-        event.keyCode == 53 ? finish(nil) : super.keyDown(with: event)
+        switch event.keyCode {
+        case 36, 76: finish(bounds)
+        case 53: finish(nil)
+        default: super.keyDown(with: event)
+        }
     }
 
     private func finish(_ rect: CGRect?) {

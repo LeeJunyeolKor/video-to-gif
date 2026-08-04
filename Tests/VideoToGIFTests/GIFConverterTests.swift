@@ -77,6 +77,13 @@ import UniformTypeIdentifiers
         mainScreenMaxY: 900
     )
     #expect(secondaryDisplayArguments.contains("-R-101,-251,321,201"))
+
+    let fullScreenArguments = ScreenRecorder.arguments(
+        outputURL: URL(fileURLWithPath: "/tmp/capture.mov"),
+        region: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+        mainScreenMaxY: 1117
+    )
+    #expect(fullScreenArguments.contains("-R0,0,1728,1117"))
 }
 
 @Test func screenRecordingPermissionRequest() {
@@ -96,7 +103,11 @@ import UniformTypeIdentifiers
     var selected: CGRect?
     view.onFinish = { selected = $0 }
 
-    func mouseEvent(_ type: NSEvent.EventType, at point: CGPoint) -> NSEvent {
+    func mouseEvent(
+        _ type: NSEvent.EventType,
+        at point: CGPoint,
+        clickCount: Int = 1
+    ) -> NSEvent {
         NSEvent.mouseEvent(
             with: type,
             location: point,
@@ -105,7 +116,7 @@ import UniformTypeIdentifiers
             windowNumber: 0,
             context: nil,
             eventNumber: 0,
-            clickCount: 1,
+            clickCount: clickCount,
             pressure: 1
         )!
     }
@@ -115,6 +126,14 @@ import UniformTypeIdentifiers
     view.mouseUp(with: mouseEvent(.leftMouseUp, at: CGPoint(x: 220, y: 130)))
 
     #expect(selected == CGRect(x: 20, y: 30, width: 200, height: 100))
+
+    let fullScreenView = AreaSelectionView(frame: CGRect(x: 0, y: 0, width: 500, height: 400))
+    var fullScreenSelection: CGRect?
+    fullScreenView.onFinish = { fullScreenSelection = $0 }
+    fullScreenView.mouseDown(with: mouseEvent(.leftMouseDown, at: .zero, clickCount: 2))
+    fullScreenView.mouseUp(with: mouseEvent(.leftMouseUp, at: .zero, clickCount: 2))
+
+    #expect(fullScreenSelection == fullScreenView.bounds)
 }
 
 @Test @MainActor func copiesSavedGIF() throws {
