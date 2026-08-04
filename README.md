@@ -22,9 +22,9 @@ swift run
 ./scripts/build-app.sh
 ```
 
-`dist/VideoToGIF.zip`을 팀원에게 공유하세요. 현재 빌드는 Apple Silicon Mac용입니다.
+`dist/VideoToGIF.zip`을 팀원에게 공유하세요. ZIP에는 앱과 설치용 `README.txt`가 들어 있습니다. 현재 빌드는 Apple Silicon Mac용입니다.
 
-팀원은 압축을 푼 뒤 앱을 Control-클릭하여 `열기`를 선택하고, 첫 녹화 때 화면 기록 권한을 허용해야 합니다.
+팀원은 압축을 푼 뒤 `README.txt`에 따라 앱을 응용 프로그램 폴더로 옮기고 실행해야 합니다.
 
 GitHub Release를 만들려면 버전 태그를 푸시하세요. 태그 버전으로 앱을 빌드해 `VideoToGIF.zip`을 자동 첨부합니다.
 

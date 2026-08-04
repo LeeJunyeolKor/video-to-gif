@@ -24,5 +24,9 @@ fi
 codesign --verify --deep --strict --verbose=2 "$app_bundle"
 archive="$project_dir/dist/VideoToGIF.zip"
 rm -f "$archive"
-ditto -c -k --keepParent "$app_bundle" "$archive"
+package_dir=$(mktemp -d "${TMPDIR:-/tmp}/VideoToGIF-package.XXXXXX")
+trap 'rm -rf "$package_dir"' EXIT
+ditto "$app_bundle" "$package_dir/VideoToGIF.app"
+ditto "$project_dir/Distribution/README.txt" "$package_dir/README.txt"
+ditto -c -k "$package_dir" "$archive"
 printf 'Built %s\n' "$archive"
