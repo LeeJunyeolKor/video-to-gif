@@ -5,6 +5,37 @@ import Testing
 import UniformTypeIdentifiers
 @testable import VideoToGIF
 
+@Test func offersApplicationMoveOnlyForAppBundlesOutsideApplicationFolders() {
+    let applicationDirectories = [
+        URL(fileURLWithPath: "/Applications", isDirectory: true),
+        URL(fileURLWithPath: "/Users/test/Applications", isDirectory: true),
+    ]
+
+    #expect(ApplicationMover.shouldOfferMove(
+        bundleURL: URL(fileURLWithPath: "/Users/test/Downloads/VideoToGIF.app"),
+        applicationDirectories: applicationDirectories
+    ))
+    #expect(!ApplicationMover.shouldOfferMove(
+        bundleURL: URL(fileURLWithPath: "/Applications/VideoToGIF.app"),
+        applicationDirectories: applicationDirectories
+    ))
+    #expect(!ApplicationMover.shouldOfferMove(
+        bundleURL: URL(fileURLWithPath: "/Users/test/Applications/VideoToGIF.app"),
+        applicationDirectories: applicationDirectories
+    ))
+    #expect(!ApplicationMover.shouldOfferMove(
+        bundleURL: URL(fileURLWithPath: "/Users/test/.build/debug/VideoToGIF"),
+        applicationDirectories: applicationDirectories
+    ))
+
+    #expect(ApplicationMover.applicationBundleURL(
+        for: URL(fileURLWithPath: "/Downloads/VideoToGIF.app/Contents/MacOS/VideoToGIF")
+    )?.path == "/Downloads/VideoToGIF.app")
+    #expect(ApplicationMover.applicationBundleURL(
+        for: URL(fileURLWithPath: "/Users/test/.build/debug/VideoToGIF")
+    ) == nil)
+}
+
 @Test func frameSchedule() {
     let fullRange = CMTimeRange(start: .zero, duration: CMTime(seconds: 1, preferredTimescale: 600))
     let times = GIFConverter.frameTimes(in: fullRange, fps: 4)

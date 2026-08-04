@@ -17,6 +17,142 @@ struct VideoToGIFApp: App {
     }
 }
 
+@MainActor
+enum ApplicationMover {
+    private static let applicationsURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+    private static var hasOffered = false
+
+    static func offerMoveIfNeeded(
+        bundleURL: URL? = applicationBundleURL(for: Bundle.main.executableURL),
+        fileManager: FileManager = .default
+    ) {
+        guard let bundleURL else { return }
+        let applicationDirectories = [
+            applicationsURL,
+            fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Applications", isDirectory: true),
+        ]
+        guard !hasOffered,
+              shouldOfferMove(
+                bundleURL: bundleURL,
+                applicationDirectories: applicationDirectories
+              ) else { return }
+        hasOffered = true
+
+        let bundleName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+            ?? bundleURL.deletingPathExtension().lastPathComponent
+        let destinationURL = applicationsURL
+            .appendingPathComponent(bundleName)
+            .appendingPathExtension("app")
+        let destinationExists = fileManager.fileExists(atPath: destinationURL.path)
+        let alert = NSAlert()
+        alert.messageText = "응용 프로그램 폴더로 이동할까요?"
+        alert.informativeText = destinationExists
+            ? "기존 VideoToGIF를 교체하고 현재 복사본은 휴지통으로 이동합니다."
+            : "앱을 설치하고 현재 복사본은 휴지통으로 이동합니다."
+        alert.addButton(withTitle: "이동")
+        alert.addButton(withTitle: "나중에")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            try install(
+                bundleURL,
+                at: destinationURL,
+                applicationsURL: applicationsURL,
+                replaceExisting: destinationExists,
+                fileManager: fileManager
+            )
+            relaunch(destinationURL, recycling: bundleURL)
+        } catch {
+            showFailure(error.localizedDescription)
+        }
+    }
+
+    nonisolated static func shouldOfferMove(
+        bundleURL: URL,
+        applicationDirectories: [URL]
+    ) -> Bool {
+        guard bundleURL.pathExtension.lowercased() == "app" else { return false }
+        let bundlePath = bundleURL.standardizedFileURL.resolvingSymlinksInPath().path
+        return !applicationDirectories.contains { directory in
+            let directoryPath = directory.standardizedFileURL.resolvingSymlinksInPath().path
+            return bundlePath.hasPrefix(directoryPath + "/")
+        }
+    }
+
+    nonisolated static func applicationBundleURL(for executableURL: URL?) -> URL? {
+        guard let executableURL else { return nil }
+        let bundleURL = executableURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return bundleURL.pathExtension.lowercased() == "app" ? bundleURL : nil
+    }
+
+    private static func install(
+        _ sourceURL: URL,
+        at destinationURL: URL,
+        applicationsURL: URL,
+        replaceExisting: Bool,
+        fileManager: FileManager
+    ) throws {
+        let stagingURL = applicationsURL
+            .appendingPathComponent(".VideoToGIF-\(UUID().uuidString)")
+            .appendingPathExtension("app")
+        defer { try? fileManager.removeItem(at: stagingURL) }
+
+        try fileManager.copyItem(at: sourceURL, to: stagingURL)
+        if replaceExisting {
+            _ = try fileManager.replaceItemAt(destinationURL, withItemAt: stagingURL)
+        } else {
+            try fileManager.moveItem(at: stagingURL, to: destinationURL)
+        }
+    }
+
+    private static func relaunch(_ destinationURL: URL, recycling sourceURL: URL) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: destinationURL, configuration: configuration) {
+            _, error in
+            let errorMessage = error?.localizedDescription
+            Task { @MainActor in
+                if let errorMessage {
+                    showFailure(errorMessage)
+                    return
+                }
+                NSWorkspace.shared.recycle([sourceURL]) { _, error in
+                    let errorMessage = error?.localizedDescription
+                    Task { @MainActor in
+                        if let errorMessage {
+                            showRecycleFailure(errorMessage)
+                        }
+                        NSApp.terminate(nil)
+                    }
+                }
+            }
+        }
+    }
+
+    private static func showFailure(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "앱을 이동하지 못했습니다."
+        alert.informativeText = message
+        alert.addButton(withTitle: "응용 프로그램 폴더 열기")
+        alert.addButton(withTitle: "확인")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(applicationsURL)
+        }
+    }
+
+    private static func showRecycleFailure(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "앱은 설치했지만 현재 복사본을 휴지통으로 이동하지 못했습니다."
+        alert.informativeText = message
+        alert.addButton(withTitle: "확인")
+        alert.runModal()
+    }
+}
+
 enum ActivityStatus {
     case idle(String)
     case ready(String)
@@ -167,6 +303,9 @@ struct ContentView: View {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
             ScreenRecorder.install { recordScreen(reusingLastRegion: $0) }
+            DispatchQueue.main.async {
+                ApplicationMover.offerMoveIfNeeded()
+            }
         }
         .fileImporter(
             isPresented: $isImporterPresented,

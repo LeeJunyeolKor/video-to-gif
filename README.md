@@ -24,7 +24,7 @@ swift run
 
 `dist/VideoToGIF.zip`을 팀원에게 공유하세요. ZIP에는 앱과 설치용 `README.txt`가 들어 있습니다. 현재 빌드는 Apple Silicon Mac용입니다.
 
-팀원은 압축을 푼 뒤 `README.txt`에 따라 앱을 응용 프로그램 폴더로 옮기고 실행해야 합니다.
+팀원은 압축을 푼 뒤 `README.txt`에 따라 앱을 실행하고 응용 프로그램 폴더로 이동합니다.
 
 GitHub Release를 만들려면 버전 태그를 푸시하세요. 태그 버전으로 앱을 빌드해 `VideoToGIF.zip`을 자동 첨부합니다.
 
