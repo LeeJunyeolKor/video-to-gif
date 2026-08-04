@@ -18,6 +18,37 @@ import UniformTypeIdentifiers
     #expect(GIFConverter.frameTimes(in: .zero).isEmpty)
 }
 
+@Test func estimatedGIFSizeUsesDurationFPSAndOutputSize() {
+    let base = GIFConverter.estimatedFileSize(
+        duration: 2,
+        sourceSize: CGSize(width: 1920, height: 1080),
+        fps: 12,
+        maximumDimension: 960
+    )
+    let moreFrames = GIFConverter.estimatedFileSize(
+        duration: 4,
+        sourceSize: CGSize(width: 1920, height: 1080),
+        fps: 12,
+        maximumDimension: 960
+    )
+    let smaller = GIFConverter.estimatedFileSize(
+        duration: 2,
+        sourceSize: CGSize(width: 1920, height: 1080),
+        fps: 12,
+        maximumDimension: 480
+    )
+
+    #expect(base > 0)
+    #expect(moreFrames == base * 2)
+    #expect(smaller == base / 4)
+    #expect(GIFConverter.estimatedFileSize(
+        duration: 0,
+        sourceSize: CGSize(width: 1920, height: 1080),
+        fps: 12,
+        maximumDimension: 960
+    ) == 0)
+}
+
 @Test func activityStatusPresentation() {
     #expect(ActivityStatus.idle("준비").presentation.symbolName == "circle.dashed")
     #expect(ActivityStatus.ready("video.mov").presentation.symbolName == "movieclapper")

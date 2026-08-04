@@ -50,12 +50,15 @@ struct ContentView: View {
     @State private var trimStart = 0.0
     @State private var trimEnd = 0.0
     @State private var outputURL: URL?
+    @State private var sourceSize = CGSize.zero
+    @State private var framesPerSecond = Int(GIFConverter.framesPerSecond)
+    @State private var maximumDimension = Int(GIFConverter.defaultMaximumDimension)
 
     var body: some View {
         VStack(spacing: sourceURL == nil ? 24 : 10) {
             if let player {
                 VideoPreview(player: player)
-                    .frame(height: 150)
+                    .frame(height: 140)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
                 Image(systemName: "rectangle.dashed.badge.record")
@@ -91,7 +94,31 @@ struct ContentView: View {
                             set: { trimEnd = max($0, trimStart) }
                         )
                     )
+                    HStack(spacing: 8) {
+                        Picker("FPS", selection: $framesPerSecond) {
+                            ForEach([8, 12, 15, 24], id: \.self) { fps in
+                                Text("\(fps) FPS").tag(fps)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+
+                        Picker("출력 크기", selection: $maximumDimension) {
+                            ForEach([480, 720, 960], id: \.self) { dimension in
+                                Text("\(dimension) px").tag(dimension)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+
+                        Spacer()
+                        Text("예상 \(formatBytes(estimatedOutputBytes))")
+                            .foregroundStyle(.secondary)
+                            .help("장면 변화와 색상에 따라 실제 크기는 달라집니다.")
+                    }
+                    .controlSize(.small)
                 }
+                .disabled(isWorking || isSelecting || isRecording)
             }
 
             HStack(spacing: 12) {
@@ -137,7 +164,7 @@ struct ContentView: View {
                     .controlSize(.small)
             }
         }
-        .padding(32)
+        .padding(sourceURL == nil ? 32 : 16)
         .onAppear {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
@@ -180,6 +207,19 @@ struct ContentView: View {
         String(format: "%d:%04.1f", Int(seconds) / 60, seconds.truncatingRemainder(dividingBy: 60))
     }
 
+    private var estimatedOutputBytes: Int64 {
+        GIFConverter.estimatedFileSize(
+            duration: trimEnd - trimStart,
+            sourceSize: sourceSize,
+            fps: Double(framesPerSecond),
+            maximumDimension: CGFloat(maximumDimension)
+        )
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
     private func loadSource(_ url: URL) {
         player?.pause()
         sourceURL = url
@@ -188,15 +228,26 @@ struct ContentView: View {
         trimStart = 0
         trimEnd = 0
         outputURL = nil
+        sourceSize = .zero
         status = .processing("영상 정보를 불러오는 중…")
 
         Task {
             do {
-                let seconds = try await AVURLAsset(url: url).load(.duration).seconds
+                let asset = AVURLAsset(url: url)
+                let seconds = try await asset.load(.duration).seconds
+                guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+                    throw ConversionError.invalidVideo
+                }
+                let naturalSize = try await track.load(.naturalSize)
+                let transform = try await track.load(.preferredTransform)
                 guard sourceURL == url else { return }
                 guard seconds.isFinite, seconds > 0 else { throw ConversionError.invalidVideo }
                 duration = seconds
                 trimEnd = seconds
+                sourceSize = CGRect(origin: .zero, size: naturalSize)
+                    .applying(transform)
+                    .standardized
+                    .size
                 status = .ready(url.lastPathComponent)
             } catch {
                 guard sourceURL == url else { return }
@@ -257,19 +308,23 @@ struct ContentView: View {
         panel.nameFieldStringValue = sourceURL.deletingPathExtension().lastPathComponent + ".gif"
         guard panel.runModal() == .OK, let outputURL = panel.url else { return }
 
+        let range = CMTimeRange(
+            start: CMTime(seconds: trimStart, preferredTimescale: 600),
+            end: CMTime(seconds: trimEnd, preferredTimescale: 600)
+        )
+        let fps = Double(framesPerSecond)
+        let maximumDimension = CGFloat(maximumDimension)
         isWorking = true
         status = .processing("GIF로 변환하는 중…")
 
         Task {
             do {
-                let range = CMTimeRange(
-                    start: CMTime(seconds: trimStart, preferredTimescale: 600),
-                    end: CMTime(seconds: trimEnd, preferredTimescale: 600)
-                )
                 let frameCount = try await GIFConverter.convert(
                     sourceURL,
                     to: outputURL,
-                    timeRange: range
+                    timeRange: range,
+                    fps: fps,
+                    maximumDimension: maximumDimension
                 )
                 self.outputURL = outputURL
                 let copied = SavedGIFActions.copy(outputURL)
@@ -550,7 +605,7 @@ final class AreaSelectionView: NSView {
 
 enum GIFConverter {
     static let framesPerSecond = 12.0
-    static let maximumSize = CGSize(width: 960, height: 960)
+    static let defaultMaximumDimension: CGFloat = 960
 
     static func frameTimes(in range: CMTimeRange, fps: Double = framesPerSecond) -> [CMTime] {
         let start = range.start.seconds
@@ -559,7 +614,9 @@ enum GIFConverter {
               start.isFinite, duration.isFinite, duration > 0,
               fps.isFinite, fps > 0 else { return [] }
 
-        let count = max(1, Int((duration * fps).rounded(.up)))
+        let rawCount = (duration * fps).rounded(.up)
+        guard rawCount.isFinite, rawCount <= Double(Int.max) else { return [] }
+        let count = max(1, Int(rawCount))
         return (0..<count).compactMap {
             let seconds = start + Double($0) / fps
             return seconds < start + duration
@@ -571,18 +628,20 @@ enum GIFConverter {
     static func convert(
         _ sourceURL: URL,
         to outputURL: URL,
-        timeRange: CMTimeRange? = nil
+        timeRange: CMTimeRange? = nil,
+        fps: Double = framesPerSecond,
+        maximumDimension: CGFloat = defaultMaximumDimension
     ) async throws -> Int {
         let asset = AVURLAsset(url: sourceURL)
         let duration = try await asset.load(.duration)
         let assetRange = CMTimeRange(start: .zero, duration: duration)
         let range = CMTimeRangeGetIntersection(assetRange, otherRange: timeRange ?? assetRange)
-        let times = frameTimes(in: range)
+        let times = frameTimes(in: range, fps: fps)
         guard !times.isEmpty else { throw ConversionError.invalidVideo }
 
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = maximumSize
+        generator.maximumSize = CGSize(width: maximumDimension, height: maximumDimension)
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
 
@@ -601,8 +660,8 @@ enum GIFConverter {
 
         let frameProperties = [
             kCGImagePropertyGIFDictionary: [
-                kCGImagePropertyGIFDelayTime: 1 / framesPerSecond,
-                kCGImagePropertyGIFUnclampedDelayTime: 1 / framesPerSecond,
+                kCGImagePropertyGIFDelayTime: 1 / fps,
+                kCGImagePropertyGIFUnclampedDelayTime: 1 / fps,
             ]
         ] as CFDictionary
 
@@ -619,6 +678,26 @@ enum GIFConverter {
         }
 
         return writtenFrames
+    }
+
+    static func estimatedFileSize(
+        duration: Double,
+        sourceSize: CGSize,
+        fps: Double,
+        maximumDimension: CGFloat
+    ) -> Int64 {
+        guard duration.isFinite, duration > 0,
+              sourceSize.width.isFinite, sourceSize.width > 0,
+              sourceSize.height.isFinite, sourceSize.height > 0,
+              fps.isFinite, fps > 0,
+              maximumDimension.isFinite, maximumDimension > 0 else { return 0 }
+
+        let scale = min(1, maximumDimension / max(sourceSize.width, sourceSize.height))
+        let pixels = sourceSize.width * scale * sourceSize.height * scale
+        let frames = (duration * fps).rounded(.up)
+        // ponytail: motion and color count dominate GIF compression; use a sampled encode if precision matters.
+        let estimate = (pixels * frames * 0.06).rounded(.up)
+        return estimate >= Double(Int64.max) ? Int64.max : Int64(estimate)
     }
 }
 
