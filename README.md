@@ -29,8 +29,8 @@ swift run
 GitHub Release를 만들려면 버전 태그를 푸시하세요. 태그 버전으로 앱을 빌드해 `VideoToGIF.zip`을 자동 첨부합니다.
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 ```sh
