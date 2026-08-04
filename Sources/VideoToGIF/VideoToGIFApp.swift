@@ -398,6 +398,7 @@ enum ScreenRecorder {
     private static var stopInput: FileHandle?
     private static var stopTask: Task<Void, Never>?
     private static var statusItem: NSStatusItem?
+    private static var quitMenuItem: NSMenuItem?
     private static var menuTarget: RecordingMenuTarget?
     private static var startAction: ((Bool) -> Void)?
     private static var hotKey: EventHotKeyRef?
@@ -411,7 +412,18 @@ enum ScreenRecorder {
         let target = RecordingMenuTarget()
         item.button?.target = target
         item.button?.action = #selector(RecordingMenuTarget.toggle)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let quitItem = NSMenuItem(
+            title: "앱 종료",
+            action: #selector(RecordingMenuTarget.quit),
+            keyEquivalent: ""
+        )
+        quitItem.target = target
+        menu.addItem(quitItem)
+        item.button?.menu = menu
         statusItem = item
+        quitMenuItem = quitItem
         menuTarget = target
         installShortcut()
         showStartButton()
@@ -560,8 +572,9 @@ enum ScreenRecorder {
             accessibilityDescription: "녹화 중지"
         )
         statusItem?.button?.contentTintColor = .systemRed
-        statusItem?.button?.toolTip = "녹화 중지"
+        statusItem?.button?.toolTip = "클릭: 녹화 중지"
         statusItem?.button?.isEnabled = true
+        quitMenuItem?.isEnabled = false
     }
 
     private static func showStartButton() {
@@ -570,8 +583,9 @@ enum ScreenRecorder {
             accessibilityDescription: "화면 영역 녹화"
         )
         statusItem?.button?.contentTintColor = nil
-        statusItem?.button?.toolTip = "화면 영역 녹화 · ⌃⌘G 최근 영역"
+        statusItem?.button?.toolTip = "클릭: 화면 영역 녹화 · 우클릭: 앱 종료 · ⌃⌘G 최근 영역"
         statusItem?.button?.isEnabled = true
+        quitMenuItem?.isEnabled = true
     }
 }
 
@@ -611,6 +625,10 @@ enum RecordingError: LocalizedError {
 private final class RecordingMenuTarget: NSObject {
     @objc func toggle() {
         ScreenRecorder.toggle()
+    }
+
+    @objc func quit() {
+        NSApp.terminate(nil)
     }
 }
 
