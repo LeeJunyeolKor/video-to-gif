@@ -10,9 +10,10 @@ struct VideoToGIFApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(width: 520, height: 360)
+                .frame(minWidth: 520, minHeight: 360)
         }
-        .windowResizability(.contentSize)
+        .defaultSize(width: 720, height: 560)
+        .windowResizability(.contentMinSize)
     }
 }
 
