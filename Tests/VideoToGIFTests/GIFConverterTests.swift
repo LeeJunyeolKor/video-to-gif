@@ -2,6 +2,7 @@ import AppKit
 import CoreMedia
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 @testable import VideoToGIF
 
 @Test func frameSchedule() {
@@ -64,4 +65,17 @@ import Testing
     view.mouseUp(with: mouseEvent(.leftMouseUp, at: CGPoint(x: 220, y: 130)))
 
     #expect(selected == CGRect(x: 20, y: 30, width: 200, height: 100))
+}
+
+@Test @MainActor func copiesSavedGIF() throws {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("video-to-gif-pasteboard-\(UUID().uuidString).gif")
+    let data = Data("GIF89a".utf8)
+    try data.write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let pasteboard = NSPasteboard.withUniqueName()
+    #expect(SavedGIFActions.copy(url, to: pasteboard))
+    #expect(pasteboard.data(forType: NSPasteboard.PasteboardType(UTType.gif.identifier)) == data)
+    #expect(pasteboard.string(forType: .fileURL) == url.absoluteString)
 }

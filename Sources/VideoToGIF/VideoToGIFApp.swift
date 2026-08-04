@@ -49,6 +49,7 @@ struct ContentView: View {
     @State private var duration = 0.0
     @State private var trimStart = 0.0
     @State private var trimEnd = 0.0
+    @State private var outputURL: URL?
 
     var body: some View {
         VStack(spacing: sourceURL == nil ? 24 : 10) {
@@ -121,6 +122,14 @@ struct ContentView: View {
                 .disabled(
                     sourceURL == nil || trimEnd <= trimStart || isWorking || isSelecting || isRecording
                 )
+
+                if let outputURL {
+                    Button("Finder에서 보기", systemImage: "folder") {
+                        SavedGIFActions.reveal(outputURL)
+                    }
+                    .labelStyle(.iconOnly)
+                    .help("Finder에서 보기")
+                }
             }
 
             if isWorking || isSelecting {
@@ -178,6 +187,7 @@ struct ContentView: View {
         duration = 0
         trimStart = 0
         trimEnd = 0
+        outputURL = nil
         status = .processing("영상 정보를 불러오는 중…")
 
         Task {
@@ -261,12 +271,33 @@ struct ContentView: View {
                     to: outputURL,
                     timeRange: range
                 )
-                status = .success("저장 완료 · \(frameCount)프레임 · \(outputURL.lastPathComponent)")
+                self.outputURL = outputURL
+                let copied = SavedGIFActions.copy(outputURL)
+                status = .success(
+                    "저장 완료 · \(frameCount)프레임" + (copied ? " · 클립보드 복사됨" : "")
+                )
             } catch {
                 status = .failure(error.localizedDescription)
             }
             isWorking = false
         }
+    }
+}
+
+@MainActor
+enum SavedGIFActions {
+    static func copy(_ url: URL, to pasteboard: NSPasteboard = .general) -> Bool {
+        guard let data = try? Data(contentsOf: url) else { return false }
+
+        let item = NSPasteboardItem()
+        item.setData(data, forType: NSPasteboard.PasteboardType(UTType.gif.identifier))
+        item.setString(url.absoluteString, forType: .fileURL)
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([item])
+    }
+
+    static func reveal(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }
 
