@@ -378,9 +378,13 @@ struct ContentView: View {
 
     private func recordScreen(reusingLastRegion: Bool = false) {
         guard !isWorking, !isSelecting, !isRecording else { return }
-        guard ScreenRecorder.requestPermission() else {
+        let permission = ScreenRecorder.checkPermission()
+        guard permission.granted else {
             status = .failure("화면 기록 권한이 필요합니다.")
-            ScreenRecorder.showPermissionAlert()
+            // macOS가 시스템 프롬프트를 이미 보여줬으면 커스텀 경고를 건너뛴다.
+            if !permission.systemPromptShown {
+                ScreenRecorder.showPermissionAlert()
+            }
             return
         }
         player?.pause()
@@ -872,11 +876,34 @@ enum ScreenRecorder {
         ]
     }
 
+    struct PermissionResult: Sendable {
+        var granted: Bool
+        var systemPromptShown: Bool
+    }
+
     nonisolated static func requestPermission(
         preflight: () -> Bool = { CGPreflightScreenCaptureAccess() },
         request: () -> Bool = { CGRequestScreenCaptureAccess() }
     ) -> Bool {
-        preflight() || request()
+        checkPermission(preflight: preflight, request: request).granted
+    }
+
+    nonisolated static func checkPermission(
+        preflight: () -> Bool = { CGPreflightScreenCaptureAccess() },
+        request: () -> Bool = { CGRequestScreenCaptureAccess() }
+    ) -> PermissionResult {
+        if preflight() {
+            return PermissionResult(granted: true, systemPromptShown: false)
+        }
+        // CGRequestScreenCaptureAccess() shows the system prompt the first time.
+        // On subsequent calls it returns false without any UI.
+        let granted = request()
+        // If request() returned false, the system may or may not have shown
+        // a prompt. We treat first-time denial (preflight was unknown) as
+        // "system showed its own prompt" and skip our custom alert.
+        // Preflight still false after request = system showed the prompt.
+        let systemPromptShown = !preflight()
+        return PermissionResult(granted: granted, systemPromptShown: systemPromptShown)
     }
 
     nonisolated static func screenCaptureSettingsURL() -> URL? {

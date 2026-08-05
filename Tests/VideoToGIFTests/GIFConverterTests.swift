@@ -141,6 +141,25 @@ import UniformTypeIdentifiers
     #expect(!ScreenRecorder.requestPermission(preflight: { false }, request: { false }))
 }
 
+@Test func checkPermissionSkipsAlertWhenSystemPromptShown() {
+    // preflight true → granted, no system prompt
+    let alreadyGranted = ScreenRecorder.checkPermission(preflight: { true }, request: { false })
+    #expect(alreadyGranted.granted)
+    #expect(!alreadyGranted.systemPromptShown)
+
+    // preflight false, request true → granted via system prompt
+    let grantedViaPrompt = ScreenRecorder.checkPermission(preflight: { false }, request: { true })
+    #expect(grantedViaPrompt.granted)
+
+    // preflight false, request false → denied, system showed prompt (preflight still false)
+    let deniedWithPrompt = ScreenRecorder.checkPermission(
+        preflight: { false },
+        request: { false }
+    )
+    #expect(!deniedWithPrompt.granted)
+    #expect(deniedWithPrompt.systemPromptShown)
+}
+
 @Test func screenCaptureSettingsURLTargetsPrivacyPane() {
     #expect(
         ScreenRecorder.screenCaptureSettingsURL()?.absoluteString
