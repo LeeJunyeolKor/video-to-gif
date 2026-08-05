@@ -16,6 +16,18 @@ swift run
 
 `⌃⌘G`를 누르면 첫 번에는 영역을 선택하고, 이후에는 최근 영역에서 바로 녹화합니다. 녹화 중에 다시 누르면 중지합니다.
 
+## 간편 설치 (macOS)
+
+최신 GitHub Release를 내려받아 `/Applications/VideoToGIF.app`으로 설치하고 실행하려면 다음 명령을 실행하세요.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/LeeJunyeolKor/video-to-gif/main/scripts/install.sh | bash
+```
+
+설치 스크립트는 최신 Release의 `VideoToGIF.zip`을 다운로드하고, 릴리스에 체크섬이 있으면 SHA-256을 검증한 뒤 앱을 설치합니다. 앱이 실행 중이면 종료 후 교체하며, 첫 실행 때 macOS의 보안 승인과 화면 기록 권한 허용이 필요할 수 있습니다.
+
+스크립트는 기존 앱을 삭제하기 전에 다운로드한 앱 번들을 검증합니다. 설치 위치를 바꾸거나 실행 없이 검증하려면 `APP_DEST`와 `VIDEO_TO_GIF_SKIP_OPEN=1` 환경 변수를 사용할 수 있습니다.
+
 ## 팀 공유용 빌드
 
 ```sh
@@ -26,7 +38,7 @@ swift run
 
 팀원은 압축을 푼 뒤 `README.txt`에 따라 앱을 실행하고 응용 프로그램 폴더로 이동합니다.
 
-GitHub Release를 만들려면 버전 태그를 푸시하세요. 태그 버전으로 앱을 빌드해 `VideoToGIF.zip`을 자동 첨부합니다.
+GitHub Release를 만들려면 버전 태그를 푸시하세요. 태그 버전으로 앱을 빌드해 `VideoToGIF.zip`과 SHA-256 체크섬을 자동 첨부합니다.
 
 ```sh
 git tag v0.2.0
