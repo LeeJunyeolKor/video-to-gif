@@ -141,6 +141,13 @@ import UniformTypeIdentifiers
     #expect(!ScreenRecorder.requestPermission(preflight: { false }, request: { false }))
 }
 
+@Test func screenCaptureSettingsURLTargetsPrivacyPane() {
+    #expect(
+        ScreenRecorder.screenCaptureSettingsURL()?.absoluteString
+            == "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+    )
+}
+
 @Test @MainActor func repeatsStopSignalUntilCancelled() async throws {
     let pipe = Pipe()
     let task = Task {

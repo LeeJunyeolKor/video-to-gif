@@ -879,17 +879,26 @@ enum ScreenRecorder {
         preflight() || request()
     }
 
+    nonisolated static func screenCaptureSettingsURL() -> URL? {
+        URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+    }
+
     static func showPermissionAlert() {
         let alert = NSAlert()
         alert.messageText = "화면 기록 권한이 필요합니다."
-        alert.informativeText = "시스템 설정 → 개인정보 보호 및 보안 → 화면 및 시스템 오디오 기록에서 Video to GIF를 허용한 뒤 앱을 다시 여세요."
+        alert.informativeText = "시스템 설정 → 개인정보 보호 및 보안 → 화면 및 시스템 오디오 녹음에서 ‘Video to GIF’를 허용한 뒤 앱을 다시 여세요."
         alert.addButton(withTitle: "시스템 설정 열기")
         alert.addButton(withTitle: "확인")
-        guard alert.runModal() == .alertFirstButtonReturn,
-              let settingsURL = NSWorkspace.shared.urlForApplication(
-                withBundleIdentifier: "com.apple.systempreferences"
-              ) else { return }
-        NSWorkspace.shared.open(settingsURL)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        if let settingsURL = screenCaptureSettingsURL(),
+           NSWorkspace.shared.open(settingsURL) {
+            return
+        }
+        guard let settingsAppURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.apple.systempreferences"
+        ) else { return }
+        NSWorkspace.shared.open(settingsAppURL)
     }
 
     static func stop() {
